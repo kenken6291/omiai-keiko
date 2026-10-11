@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F3B35">
+<title>お見合い稽古｜婚活シミュレーション＆トレーニング</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Old+Mincho:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-mode="male">
+
+<header class="top">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">稽</span>
+    <div class="brand-text">
+      <h1>お見合い稽古</h1>
+      <small>婚活シミュレーション＆トレーニング</small>
+    </div>
+    <button type="button" class="ver-badge" id="verBadge" aria-label="バージョン情報を見る">v-</button>
+  </div>
+  <div class="mode-switch" role="radiogroup" aria-label="モード切り替え">
+    <button type="button" role="radio" data-mode-btn="male">男性モード</button>
+    <button type="button" role="radio" data-mode-btn="female">女性モード</button>
+  </div>
+  <div class="account" id="account" hidden>
+    <span id="nick"></span>
+    <button type="button" class="link" id="btnLogout">ログアウト</button>
+  </div>
+</header>
+
+<nav class="steps" id="steps" hidden aria-label="稽古の流れ">
+  <ol>
+    <li><button type="button" data-go="hearing"><span>1</span>ヒアリング</button></li>
+    <li><button type="button" data-go="styling"><span>2</span>身だしなみ</button></li>
+    <li><button type="button" data-go="omiai"><span>3</span>模擬お見合い</button></li>
+    <li><button type="button" data-go="result"><span>4</span>結果</button></li>
+  </ol>
+</nav>
+
+<main>
+
+  <!-- 認証 -->
+  <section id="view-auth" class="view">
+    <div class="hero">
+      <h2>お見合いの前に、<br>ここで一度お茶をしておきましょう。</h2>
+      <p>声で答えてプロフィールを作り、身だしなみを整え、AIのお相手と本番さながらの会話を練習します。終わったら、使える会話とデートの提案まで。</p>
+      <ol class="hero-flow">
+        <li>声でヒアリング</li>
+        <li>服・髪・身だしなみの相談</li>
+        <li>模擬お見合い</li>
+        <li>ふり返りと提案</li>
+      </ol>
+    </div>
+
+    <div class="panel auth">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-auth-tab="login" aria-selected="true">ログイン</button>
+        <button type="button" role="tab" data-auth-tab="register" aria-selected="false">新規登録</button>
+        <button type="button" role="tab" data-auth-tab="reset" aria-selected="false">パスワード再発行</button>
+      </div>
+
+      <form id="formLogin" data-auth="login" autocomplete="on">
+        <label>メールアドレス<input type="email" id="liEmail" required autocomplete="email"></label>
+        <label>パスワード
+          <span class="pw"><input type="password" id="liPass" required autocomplete="current-password"><button type="button" class="pw-toggle" data-for="liPass">表示</button></span>
+        </label>
+        <button class="btn wide" type="submit">ログインする</button>
+        <p class="note">仮パスワードでログインすると、新しいパスワードの設定に進みます。5回続けて間違えると15分ロックされます。</p>
+      </form>
+
+      <form id="formRegister" data-auth="register" hidden>
+        <label>メールアドレス<input type="email" id="rgEmail" required autocomplete="email"></label>
+        <label>ニックネーム<input type="text" id="rgNick" required maxlength="20" placeholder="例：けん"></label>
+        <fieldset class="seg">
+          <legend>性別</legend>
+          <label><input type="radio" name="rgGender" value="male" checked>男性</label>
+          <label><input type="radio" name="rgGender" value="female">女性</label>
+        </fieldset>
+        <label>年代
+          <select id="rgAge" required>
+            <option value="20代">20代</option>
+            <option value="30代" selected>30代</option>
+            <option value="40代">40代</option>
+            <option value="50代">50代</option>
+            <option value="60代以上">60代以上</option>
+          </select>
+        </label>
+        <button class="btn wide" type="submit">仮パスワードを受け取る</button>
+        <p class="note">入力したメールアドレスに仮パスワードを送ります。</p>
+      </form>
+
+      <form id="formReset" data-auth="reset" hidden>
+        <label>登録したメールアドレス<input type="email" id="rsEmail" required autocomplete="email"></label>
+        <button class="btn wide" type="submit">仮パスワードを再発行する</button>
+        <p class="note">新しい仮パスワードをメールで送ります。ロック中の場合も解除されます。</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- パスワード変更 -->
+  <section id="view-password" class="view" hidden>
+    <div class="panel narrow">
+      <h2 class="sec-title">新しいパスワードを設定</h2>
+      <p class="muted">仮パスワードのままでは使えません。英字と数字を含む8文字以上にしてください。</p>
+      <form id="formChange">
+        <label>今のパスワード（仮パスワード）
+          <span class="pw"><input type="password" id="cpCurrent" required autocomplete="current-password"><button type="button" class="pw-toggle" data-for="cpCurrent">表示</button></span>
+        </label>
+        <label>新しいパスワード
+          <span class="pw"><input type="password" id="cpNew" required minlength="8" autocomplete="new-password"><button type="button" class="pw-toggle" data-for="cpNew">表示</button></span>
+        </label>
+        <label>新しいパスワード（確認）
+          <span class="pw"><input type="password" id="cpNew2" required minlength="8" autocomplete="new-password"><button type="button" class="pw-toggle" data-for="cpNew2">表示</button></span>
+        </label>
+        <button class="btn wide" type="submit">パスワードを設定する</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ヒアリング -->
+  <section id="view-hearing" class="view" hidden>
+    <div class="view-head">
+      <h2>声でヒアリング</h2>
+      <p>カウンセラーの質問に、声で答えてください。言い直しや文字での修正もできます。</p>
+    </div>
+
+    <div id="hearingQA" class="panel qa">
+      <div class="qa-meta"><span id="qCat"></span><span id="qCount"></span></div>
+      <div class="progress" aria-hidden="true"><i id="qBar"></i></div>
+      <p class="question" id="qText"></p>
+      <button type="button" class="mic" id="hearMic" aria-pressed="false">
+        <span class="mic-dot" aria-hidden="true"></span><span class="mic-label">話して答える</span>
+      </button>
+      <textarea id="hearAnswer" rows="4" placeholder="話した内容がここに入ります。文字で入力してもかまいません。"></textarea>
+      <label class="check"><input type="checkbox" id="hearSpeak" checked>質問を読み上げる</label>
+      <div class="row">
+        <button type="button" class="btn ghost" id="hearPrev">前の質問</button>
+        <button type="button" class="btn ghost" id="hearRepeat">もう一度聞く</button>
+        <button type="button" class="btn" id="hearNext">次の質問へ</button>
+      </div>
+    </div>
+
+    <div id="hearingResult" class="panel" hidden>
+      <div id="profileView"></div>
+      <div class="row">
+        <button type="button" class="btn ghost" id="hearRedo">ヒアリングをやり直す</button>
+        <button type="button" class="btn" data-go="styling">身だしなみの相談へ</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 身だしなみ -->
+  <section id="view-styling" class="view" hidden>
+    <div class="view-head">
+      <h2>身だしなみの相談</h2>
+      <p id="proDesc"></p>
+    </div>
+
+    <div class="pro-tabs" role="tablist">
+      <button type="button" role="tab" data-pro="stylist" aria-selected="true">スタイリスト<small>服装</small></button>
+      <button type="button" role="tab" data-pro="hair" aria-selected="false">ヘアリスト<small>髪型</small></button>
+      <button type="button" role="tab" data-pro="makeup" aria-selected="false"><span id="makeupLabel">メイクリスト</span><small id="makeupSub">肌・眉・メイク</small></button>
+    </div>
+
+    <div class="panel">
+      <div class="grid">
+        <label>お見合いの場所
+          <select id="advSituation">
+            <option>ホテルのラウンジ</option>
+            <option>カフェ</option>
+            <option>レストランでの食事</option>
+            <option>オンラインお見合い</option>
+          </select>
+        </label>
+        <label>季節
+          <select id="advSeason"><option>春</option><option>夏</option><option>秋</option><option>冬</option></select>
+        </label>
+        <label>顔の形
+          <select id="advFace">
+            <option>わからない</option><option>卵型</option><option>丸型</option><option>面長</option><option>ベース型（エラが目立つ）</option><option>逆三角形</option>
+          </select>
+        </label>
+        <label>骨格タイプ
+          <select id="advBody">
+            <option>わからない</option><option>ストレート（筋肉質・厚みがある）</option><option>ウェーブ（華奢・やわらかい）</option><option>ナチュラル（骨っぽい・フレームが大きい）</option>
+          </select>
+        </label>
+        <label>予算
+          <select id="advBudget">
+            <option>手持ちのもので工夫したい</option>
+            <option>1万円くらいまで</option>
+            <option>3万円くらいまで</option>
+            <option>5万円以上でもよい</option>
+          </select>
+        </label>
+        <label class="span2">気になっていること（任意）
+          <textarea id="advConcern" rows="2" placeholder="例：お腹まわりが気になる／白髪が増えてきた／肌のくすみ"></textarea>
+        </label>
+      </div>
+      <button type="button" class="btn wide" id="btnAdvice">アドバイスをもらう</button>
+    </div>
+
+    <div id="adviceOut"></div>
+  </section>
+
+  <!-- 模擬お見合い -->
+  <section id="view-omiai" class="view" hidden>
+    <div id="omiaiSetup">
+      <div class="view-head">
+        <h2>模擬お見合い</h2>
+        <p>あなたのプロフィールと希望年齢から、AIがお相手を用意します。</p>
+      </div>
+      <div class="panel">
+        <div class="grid">
+          <label>お相手の話しやすさ
+            <select id="optDifficulty">
+              <option value="やさしい">やさしい（話しやすい人）</option>
+              <option value="ふつう" selected>ふつう</option>
+              <option value="手ごわい">手ごわい（慎重・人見知り）</option>
+            </select>
+          </label>
+          <label>お相手の声
+            <select id="optVoice">
+              <option value="gemini">Geminiの声（自然な声）</option>
+              <option value="device">端末の声（すぐ話す）</option>
+              <option value="off">読み上げない</option>
+            </select>
+          </label>
+          <label class="span2">デートの希望エリア（任意・結果の提案に使います）
+            <input type="text" id="optArea" placeholder="例：横浜・みなとみらい">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="optHandsFree" checked>ハンズフリー（お相手が話し終えたら自動で聞き取る）</label>
+        <label class="check"><input type="checkbox" id="optInner">お相手の心の声を表示する（練習用）</label>
+      </div>
+
+      <div id="partnerCard" class="panel shinsho"></div>
+      <div class="row center">
+        <button type="button" class="btn ghost" id="btnPartner">お相手を決める</button>
+        <button type="button" class="btn" id="btnStart" hidden>お見合いを始める</button>
+      </div>
+    </div>
+
+    <div id="omiaiRoom" hidden>
+      <div class="room">
+        <div class="stage">
+          <div class="window"><div id="avatar" class="avatar" role="img" aria-label="お相手"></div></div>
+          <div class="nameplate"><b id="pName"></b><span id="pMeta"></span></div>
+          <div class="affinity">
+            <span>好感度</span>
+            <div class="meter"><i id="affBar"></i></div>
+            <b id="affNum">50</b><em id="affDelta"></em>
+          </div>
+        </div>
+        <div class="talk">
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <p id="hint" class="hint"></p>
+          <div class="composer">
+            <button type="button" class="mic small" id="talkMic" aria-pressed="false" aria-label="話す">
+              <span class="mic-dot" aria-hidden="true"></span><span class="mic-label">話す</span>
+            </button>
+            <input type="text" id="talkInput" placeholder="話しかける言葉" enterkeyhint="send">
+            <button type="button" class="btn" id="talkSend">送る</button>
+          </div>
+          <div class="row">
+            <button type="button" class="btn ghost" id="btnLeave">中断する</button>
+            <button type="button" class="btn" id="btnFinish">お見合いを終える</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 結果 -->
+  <section id="view-result" class="view" hidden>
+    <div class="view-head"><h2>ふり返りと提案</h2></div>
+    <div id="resultOut"></div>
+    <div class="panel">
+      <h3 class="sec-title">これまでの稽古</h3>
+      <ul id="logList" class="log-list"></ul>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span>お見合い稽古</span>
+  <button type="button" class="ver-link" id="ver">バージョン情報</button>
+</footer>
+
+<div id="loading" hidden>
+  <div class="loader"><div class="ring" aria-hidden="true"></div><p id="loadingMsg"></p></div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<dialog id="verDialog" class="ver-dialog" aria-labelledby="verTitle">
+  <h3 id="verTitle">バージョン情報</h3>
+  <dl class="ver-table">
+    <div><dt>アプリ</dt><dd id="vApp"></dd></div>
+    <div><dt>更新日</dt><dd id="vDate"></dd></div>
+    <div><dt>サーバー（GAS）</dt><dd id="vServer">確認中…</dd></div>
+    <div><dt>接続先</dt><dd id="vUrl"></dd></div>
+  </dl>
+  <p id="vWarn" class="warn" hidden></p>
+  <h4>更新履歴</h4>
+  <ul id="vLog" class="ver-log"></ul>
+  <form method="dialog"><button class="btn wide">閉じる</button></form>
+</dialog>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
