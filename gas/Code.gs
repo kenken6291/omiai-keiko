@@ -1,7 +1,7 @@
 /**
  * =========================================================
  * お見合い稽古（omiai-keiko）— 婚活シミュレーション＆トレーニング
- * Google Apps Script バックエンド  v1.0.1
+ * Google Apps Script バックエンド  v1.0.2
  * =========================================================
  * スクリプトプロパティ
  *   GEMINI_API_KEY   (必須) Gemini APIキー
@@ -12,16 +12,22 @@
  *   SPREADSHEET_ID   (任意) スタンドアロンのスクリプトで使う場合のみ
  *   PEPPER           setup() が自動で作成
  *
- * アバター画像（任意）
+ * お相手の写真（任意）
  *   AVATAR_FOLDER_ID の中に、お相手ごとのフォルダを作る。
- *   フォルダ名は female_ / male_ で始める（例: female_30s_01）。
- *   中のファイル名: {normal|smile|surprise|trouble}_{base|blink|talk}.png
- *   すべて同じキャンバスサイズ・同じ顔位置で書き出すこと（ズレ防止）。
- *   normal_base だけは必須。無い表情は normal_base で代用。
+ *   フォルダ名は female_ / male_（または 女性_ / 男性_）で始める。例: female_30s_01
+ *   年代は「30s」「30代」をフォルダ名に入れると年齢の目安になる。
+ *   画像ファイル名はどちらの形式でもよい：
+ *     日本語: 01_普通の顔.jpg / 01_普通の顔_瞬き.jpg / 01_普通の顔_しゃべり.jpg
+ *             笑顔・驚き顔・困り顔 も同じ（頭の番号は自由）
+ *     英語  : normal_base.png / smile_blink.png / surprise_talk.png など
+ *   「普通の顔」だけは必須。無い表情は普通の顔で代用。
+ *   すべて同じサイズ・同じ顔位置で書き出すこと（ズレ防止）。
+ *   フォルダ内に「設定.txt」（または profile.txt / .md / .json）を置くと、
+ *   名前・年齢・職業・人柄などをその内容に固定できる。
  * =========================================================
  */
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 const APP_NAME = 'お見合い稽古';
 const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts';
@@ -95,6 +101,7 @@ function doPost(e) {
       getProfile: api_getProfile_,
       structureProfile: api_structureProfile_,
       createPartner: api_createPartner_,
+      listAvatars: api_listAvatars_,
       getAvatar: api_getAvatar_,
       omiaiChat: api_omiaiChat_,
       tts: api_tts_,
@@ -432,11 +439,44 @@ function api_structureProfile_(req, u) {
  * ========================================================= */
 function api_createPartner_(req, u) {
   const mode = req.mode === 'female' ? 'female' : 'male';
-  const pg = mode === 'male' ? 'female' : 'male';
-  const voices = pg === 'female' ? VOICES_F : VOICES_M;
   const difficulty = ['やさしい', 'ふつう', '手ごわい'].indexOf(req.difficulty) >= 0 ? req.difficulty : 'ふつう';
   const profile = getJson_(SHEET.PROFILES, u.userId) || {};
   const ageRange = (profile.type && profile.type.ageRange) || '';
+  const defaultGender = mode === 'male' ? 'female' : 'male';
+
+  // 写真の選択
+  const choice = String(req.avatarChoice || 'auto');
+  const folders = avatarFolders_();
+  let folder = null, chosen = false;
+  if (choice === 'auto') {
+    const list = folders.filter(function (f) { return f.gender === defaultGender; });
+    if (list.length) folder = list[Math.floor(Math.random() * list.length)];
+  } else if (choice !== 'illust') {
+    folder = folders.filter(function (f) { return f.id === choice; })[0] || null;
+    if (!folder) throw new Error('選んだ写真が見つかりません。「写真を読み直す」を押してください');
+    chosen = true;
+  }
+  const pg = folder && folder.gender ? folder.gender : defaultGender;
+  const voices = pg === 'female' ? VOICES_F : VOICES_M;
+  const settings = folder ? folderSettings_(folder.id) : '';
+
+  // 会員が指定した項目
+  const c = req.custom || {};
+  const custom = {
+    name: str_(c.name, 20), age: str_(c.age, 3), job: str_(c.job, 30),
+    hobby: str_(c.hobby, 60), note: str_(c.note, 300)
+  };
+  const customLines = [];
+  if (custom.name) customLines.push('名前：' + custom.name);
+  if (custom.age) customLines.push('年齢：' + custom.age + '歳');
+  if (custom.job) customLines.push('職業：' + custom.job);
+  if (custom.hobby) customLines.push('趣味：' + custom.hobby);
+  if (custom.note) customLines.push('人柄・話し方：' + custom.note);
+
+  let ageRule = 'お相手の年齢：会員の希望年齢（' + (ageRange || '指定なし') + '）の範囲内。指定がなければ会員と近い年代。';
+  if (custom.age) ageRule = 'お相手の年齢：' + custom.age + '歳';
+  else if (folder && folder.ageHint) ageRule = 'お相手の年齢：' + folder.ageHint + '（写真の人の年代）';
+
   const schema = {
     name: '氏名（漢字・フルネーム・架空）', kana: 'ふりがな', age: 0, gender: pg,
     job: '職業', residence: '住まい（都道府県・市まで）',
@@ -454,59 +494,141 @@ function api_createPartner_(req, u) {
     '会員：' + genderJa_(mode) + '・' + u.ageGroup + '・ニックネーム ' + u.nickname,
     '会員のプロフィール：' + JSON.stringify(profile),
     'お相手の性別：' + genderJa_(pg),
-    'お相手の年齢：会員の希望年齢（' + (ageRange || '指定なし') + '）の範囲内。指定がなければ会員と近い年代。',
+    ageRule,
     '話しやすさ：' + difficulty + '（やさしい＝話しやすく好意的／ふつう＝一般的／手ごわい＝慎重で人見知り、価値観にこだわりがある）',
-    '会員の趣味や結婚観と、少し重なり少し違うくらいの人物にすること。',
+    settings ? '【写真の人の固定設定（書かれている項目はそのまま使う）】\n' + settings : '',
+    customLines.length ? '【会員の指定（必ずこのとおりにする。固定設定より優先）】\n' + customLines.join('\n') : '',
+    '指定のない項目は、会員の趣味や結婚観と少し重なり少し違うくらいの人物にすること。',
     '声の候補（必ずこの中から1つ）：' + voices.join(', '),
     'pitch は 0.8〜1.2、rate は 0.85〜1.15 の範囲（端末の声で使う）。',
     'JSONのみを出力：',
     JSON.stringify(schema)
-  ].join('\n');
+  ].filter(function (x) { return x; }).join('\n');
+
   const p = gemini_(prompt, { json: true, temperature: 1.0 });
   p.id = Utilities.getUuid();
   p.gender = pg;
   p.difficulty = difficulty;
-  p.age = Math.round(clampNum_(p.age, 20, 80, 35));
+  if (custom.name) p.name = custom.name;
+  p.age = Math.round(clampNum_(custom.age || p.age, 18, 90, 35));
+  if (custom.job) p.job = custom.job;
   p.hobbies = Array.isArray(p.hobbies) ? p.hobbies.slice(0, 6) : [];
   if (voices.indexOf(p.voiceName) < 0) p.voiceName = voices[Math.floor(Math.random() * voices.length)];
   p.pitch = clampNum_(p.pitch, 0.8, 1.2, 1);
   p.rate = clampNum_(p.rate, 0.85, 1.15, 1);
-  p.avatarFolderId = pickAvatarFolder_(pg);
+  p.avatarFolderId = folder ? folder.id : '';
+  p.photoChosen = chosen;
   p.createdAt = new Date().toISOString();
   upsertJson_(SHEET.PARTNERS, u.userId, p);
   return { partner: p };
 }
 
-/* ---------- アバター画像（Drive） ---------- */
+/* ---------- お相手の写真（Drive） ---------- */
+function avatarKey_(fileName) {
+  const base = String(fileName).replace(/\.(png|jpe?g|webp)$/i, '');
+  if (base === fileName) return null;
+  const en = base.match(/^(normal|smile|surprise|trouble)_(base|blink|talk)$/i);
+  if (en) return en[1].toLowerCase() + '_' + en[2].toLowerCase();
+  let expr = null;
+  if (/普通|ふつう|通常|真顔|normal/i.test(base)) expr = 'normal';
+  else if (/笑|smile/i.test(base)) expr = 'smile';
+  else if (/驚|おどろ|surprise/i.test(base)) expr = 'surprise';
+  else if (/困|こまり|trouble/i.test(base)) expr = 'trouble';
+  if (!expr) return null;
+  let st = 'base';
+  if (/瞬き|まばたき|目閉じ|blink/i.test(base)) st = 'blink';
+  else if (/しゃべ|喋|話し|口パク|talk/i.test(base)) st = 'talk';
+  return expr + '_' + st;
+}
+function folderMeta_(f) {
+  const name = f.getName();
+  let gender = '';
+  if (/^(female|女性|女)/i.test(name)) gender = 'female';
+  else if (/^(male|男性|男)/i.test(name)) gender = 'male';
+  const m = name.match(/(\d0)\s*(s|代)/i);
+  return { id: f.getId(), name: name, title: name.replace(/^(female|male|女性|男性)[_\-\s]*/i, '') || name, gender: gender, ageHint: m ? m[1] + '代' : '' };
+}
 function avatarFolders_() {
   const root = prop_('AVATAR_FOLDER_ID', '');
   if (!root) return [];
   const out = [];
   try {
     const it = DriveApp.getFolderById(root).getFolders();
-    while (it.hasNext()) { const f = it.next(); out.push({ id: f.getId(), name: f.getName() }); }
+    while (it.hasNext()) out.push(folderMeta_(it.next()));
   } catch (e) { return []; }
+  out.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
   return out;
 }
-function pickAvatarFolder_(gender) {
-  const list = avatarFolders_().filter(function (f) { return f.name.toLowerCase().indexOf(gender + '_') === 0; });
-  if (!list.length) return '';
-  return list[Math.floor(Math.random() * list.length)].id;
+function avatarFiles_(folderId) {
+  const map = {};
+  const it = DriveApp.getFolderById(folderId).getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    const k = avatarKey_(f.getName());
+    if (k && !map[k]) map[k] = f;
+  }
+  return map;
+}
+function folderSettings_(folderId) {
+  try {
+    const it = DriveApp.getFolderById(folderId).getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      if (/^(設定|profile|プロフィール)/i.test(f.getName()) && /\.(txt|md|json)$/i.test(f.getName())) {
+        return f.getBlob().getDataAsString('UTF-8').slice(0, 2000);
+      }
+    }
+  } catch (e) {}
+  return '';
+}
+function api_listAvatars_() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('avatar_list_v2');
+  if (hit) return { avatars: JSON.parse(hit) };
+  const out = avatarFolders_().map(function (f) {
+    let thumb = '';
+    try {
+      const file = avatarFiles_(f.id).normal_base;
+      if (file) {
+        const tb = file.getThumbnail();
+        if (tb) thumb = 'data:' + (tb.getContentType() || 'image/png') + ';base64,' + Utilities.base64Encode(tb.getBytes());
+      }
+    } catch (e) {}
+    f.thumb = thumb;
+    return f;
+  });
+  try { cache.put('avatar_list_v2', JSON.stringify(out), 600); } catch (e) {}
+  return { avatars: out };
 }
 function api_getAvatar_(req) {
   const id = String(req.folderId || '');
-  if (!avatarFolders_().some(function (f) { return f.id === id; })) throw new Error('お相手の画像が見つかりません');
-  const files = DriveApp.getFolderById(id).getFiles();
+  if (!avatarFolders_().some(function (f) { return f.id === id; })) throw new Error('お相手の写真が見つかりません');
+  const files = avatarFiles_(id);
+  const keys = Object.keys(files);
+  if (!files.normal_base) throw new Error('「普通の顔」の写真がありません');
+
+  // 表示用に縮小した画像を並列で取得（失敗したものは元画像）
+  const token = ScriptApp.getOAuthToken();
+  const reqs = keys.map(function (k) {
+    return { url: 'https://drive.google.com/thumbnail?sz=w720&id=' + files[k].getId(), headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: true };
+  });
+  let res = [];
+  try { res = UrlFetchApp.fetchAll(reqs); } catch (e) { res = []; }
   const images = {};
-  while (files.hasNext()) {
-    const f = files.next();
-    const m = f.getName().match(/^(normal|smile|surprise|trouble)_(base|blink|talk)\.(png|jpe?g|webp)$/i);
-    if (!m) continue;
-    const b = f.getBlob();
-    images[m[1].toLowerCase() + '_' + m[2].toLowerCase()] =
-      'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes());
-  }
-  if (!images.normal_base) throw new Error('normal_base の画像がありません');
+  keys.forEach(function (k, i) {
+    const r = res[i];
+    if (r && r.getResponseCode() === 200) {
+      const b = r.getBlob();
+      const ct = b.getContentType() || '';
+      const bytes = b.getBytes();
+      if (/^image\//.test(ct) && bytes.length > 3000) {
+        images[k] = 'data:' + ct + ';base64,' + Utilities.base64Encode(bytes);
+        return;
+      }
+    }
+    const blob = files[k].getBlob();
+    images[k] = 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
+  });
   return { images: images };
 }
 

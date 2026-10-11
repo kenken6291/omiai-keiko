@@ -211,8 +211,29 @@
     <div id="omiaiSetup">
       <div class="view-head">
         <h2>模擬お見合い</h2>
-        <p>あなたのプロフィールと希望年齢から、AIがお相手を用意します。</p>
+        <p>写真を選び、必要なら名前や職業も指定できます。空欄の項目は、あなたのプロフィールと希望年齢からAIが決めます。</p>
       </div>
+      <div class="panel">
+        <div class="pick-head">
+          <h3 class="pick-title">お相手の写真</h3>
+          <button type="button" class="link-btn" id="btnReloadPhotos">写真を読み直す</button>
+        </div>
+        <div id="photoPick" class="photo-pick" role="radiogroup" aria-label="お相手の写真"></div>
+
+        <details class="custom">
+          <summary>お相手の設定を指定する（任意）</summary>
+          <div class="grid">
+            <label>名前<input type="text" id="cuName" maxlength="20" placeholder="空欄ならAIが決めます"></label>
+            <label>年齢<input type="number" id="cuAge" min="20" max="80" inputmode="numeric" placeholder="例：32"></label>
+            <label>職業<input type="text" id="cuJob" maxlength="30" placeholder="例：保育士"></label>
+            <label>趣味<input type="text" id="cuHobby" maxlength="60" placeholder="例：カフェ巡り、ヨガ"></label>
+            <label class="span2">人柄・話し方のメモ
+              <textarea id="cuNote" rows="2" placeholder="例：おっとりしていて聞き上手。少し関西弁。"></textarea>
+            </label>
+          </div>
+        </details>
+      </div>
+
       <div class="panel">
         <div class="grid">
           <label>お相手の話しやすさ

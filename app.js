@@ -55,7 +55,9 @@ const S = {
   busy: false,
   chatBusy: false,
   view: 'auth',
-  serverVersion: ''
+  serverVersion: '',
+  avatarList: null,
+  photoChoice: localStorage.getItem('ok_photo') || 'auto'
 };
 
 /* ---------- 表示まわり ---------- */
@@ -298,34 +300,63 @@ function bindAuth() {
 /* ---------- 音声入力 ---------- */
 const Mic = (() => {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null, isActive = false, wantStop = false, finalText = '', silenceTimer = null, opts = {};
+  // Android の Chrome は continuous=true だと同じ文を何度も返すため、1発話ごとに作り直す
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  let rec = null, isActive = false, wantStop = false, committed = '', sessionText = '', silenceTimer = null, opts = {};
+
+  // 1回の認識結果をまとめる（「ありがとう」「ありがとうございます」のような積み上げ・重複を除く）
+  function joinResults(results) {
+    const out = [];
+    for (let i = 0; i < results.length; i++) {
+      const t = String(results[i][0].transcript || '').trim();
+      if (!t) continue;
+      const prev = out[out.length - 1];
+      if (prev !== undefined && t.indexOf(prev) === 0) out[out.length - 1] = t;
+      else if (prev !== undefined && prev.indexOf(t) === 0) continue;
+      else if (out.indexOf(t) >= 0) continue;
+      else out.push(t);
+    }
+    return out.join(' ');
+  }
+  // 同じ言い回しの連続（4文字以上）をひとつにする
+  function collapse(str) {
+    let s = String(str || '').replace(/\s+/g, ' ').trim();
+    let prev;
+    do { prev = s; s = s.replace(/(.{4,}?)(?:\s?\1)+/g, '$1'); } while (s !== prev);
+    return s;
+  }
+  function current() { return collapse((committed + ' ' + sessionText).trim()); }
+  function commit() {
+    const t = sessionText.trim();
+    sessionText = '';
+    if (!t) return;
+    if (committed && (committed === t || committed.slice(-t.length) === t)) return;
+    if (committed && t.indexOf(committed) === 0) { committed = t; return; }
+    committed = committed ? committed + ' ' + t : t;
+  }
   function finish() {
     if (!isActive) return;
     isActive = false;
     clearTimeout(silenceTimer);
+    commit();
     const o = opts; opts = {};
+    const text = current();
     if (o.onState) o.onState(false);
-    if (o.onEnd) o.onEnd(finalText);
+    if (o.onEnd) o.onEnd(text);
   }
   function resetSilence() {
     clearTimeout(silenceTimer);
-    if (opts.silenceMs) silenceTimer = setTimeout(() => { if (finalText.trim()) stop(); }, opts.silenceMs);
+    if (opts.silenceMs) silenceTimer = setTimeout(() => { if (current()) stop(); }, opts.silenceMs);
   }
-  function start(o) {
-    if (!SR) { toast('このブラウザは音声入力に対応していません。文字で入力してください', true); return false; }
-    abort();
-    opts = o || {}; finalText = ''; wantStop = false;
+  function makeRec() {
     rec = new SR();
     rec.lang = 'ja-JP';
     rec.interimResults = true;
-    rec.continuous = true;
+    rec.continuous = !isAndroid;
+    rec.maxAlternatives = 1;
     rec.onresult = e => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += t; else interim += t;
-      }
-      if (opts.onText) opts.onText(finalText, interim);
+      sessionText = joinResults(e.results);
+      if (opts.onText) opts.onText(current(), '');
       resetSilence();
     };
     rec.onerror = e => {
@@ -335,9 +366,18 @@ const Mic = (() => {
       }
     };
     rec.onend = () => {
-      if (!wantStop && isActive) { try { rec.start(); return; } catch (_) {} }
+      commit();
+      if (!wantStop && isActive) {
+        try { makeRec(); rec.start(); return; } catch (_) {}
+      }
       finish();
     };
+  }
+  function start(o) {
+    if (!SR) { toast('このブラウザは音声入力に対応していません。文字で入力してください', true); return false; }
+    abort();
+    opts = o || {}; committed = ''; sessionText = ''; wantStop = false;
+    makeRec();
     try { rec.start(); } catch (e) { toast('音声入力を開始できませんでした', true); return false; }
     isActive = true;
     if (opts.onState) opts.onState(true);
@@ -565,7 +605,7 @@ class Avatar {
     await Promise.all(names.map(n => new Promise(r => { const im = new Image(); im.onload = im.onerror = r; im.src = images[n]; })));
     this.el.innerHTML = '';
     const stack = document.createElement('div');
-    stack.className = 'av-stack';
+    stack.className = 'av-stack photo';
     this.layers = new Map();
     names.forEach(n => {
       const im = document.createElement('img');
@@ -748,8 +788,9 @@ function bindStyling() {
 
 /* ---------- 模擬お見合い ---------- */
 function partnerMismatch() {
+  if (!S.partner || S.partner.photoChosen) return false;
   const want = S.mode === 'male' ? 'female' : 'male';
-  return S.partner && S.partner.gender !== want;
+  return S.partner.gender !== want;
 }
 function openOmiai() {
   show('omiai');
@@ -757,6 +798,58 @@ function openOmiai() {
   $('#omiaiSetup').hidden = false;
   $('#omiaiRoom').hidden = true;
   renderPartnerCard();
+  loadPhotoList();
+}
+
+/* お相手の写真（Driveに登録した人）を選ぶ */
+async function loadPhotoList(force) {
+  if (S.avatarList && !force) { renderPhotoPick(); return; }
+  $('#photoPick').innerHTML = '<p class="muted small">写真を読み込んでいます…</p>';
+  try {
+    const j = await api('listAvatars');
+    S.avatarList = j.avatars || [];
+  } catch (e) {
+    S.avatarList = [];
+    toast(e.message, true);
+  }
+  renderPhotoPick();
+}
+function photoLabel(a) {
+  return (a.gender === 'female' ? '女性' : a.gender === 'male' ? '男性' : '') + (a.ageHint ? '・' + a.ageHint : '');
+}
+function renderPhotoPick() {
+  const list = S.avatarList || [];
+  const want = S.mode === 'male' ? 'female' : 'male';
+  const sorted = list.slice().sort((x, y) => (x.gender === want ? 0 : 1) - (y.gender === want ? 0 : 1));
+  if (S.photoChoice !== 'auto' && S.photoChoice !== 'illust' && !list.some(a => a.id === S.photoChoice)) S.photoChoice = 'auto';
+  const opt = (id, thumb, title, sub) =>
+    '<button type="button" role="radio" class="photo-opt" data-photo="' + esc(id) + '" aria-checked="' + (S.photoChoice === id ? 'true' : 'false') + '">' +
+    '<span class="ph">' + (thumb ? '<img src="' + thumb + '" alt="">' : '<span class="ph-icon">' + esc(title.slice(0, 1)) + '</span>') + '</span>' +
+    '<b>' + esc(title) + '</b><small>' + esc(sub) + '</small></button>';
+  let html = opt('auto', '', 'おまかせ', list.length ? '登録写真からランダム' : '写真がなければイラスト');
+  html += opt('illust', '', 'イラスト', '写真を使わない');
+  html += sorted.map(a => opt(a.id, a.thumb, a.title || a.name, photoLabel(a))).join('');
+  $('#photoPick').innerHTML = html;
+  $$('[data-photo]').forEach(b => b.addEventListener('click', () => {
+    S.photoChoice = b.dataset.photo;
+    localStorage.setItem('ok_photo', S.photoChoice);
+    $$('[data-photo]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false'));
+  }));
+}
+function customSpec() {
+  const c = {
+    name: $('#cuName').value.trim(),
+    age: $('#cuAge').value.trim(),
+    job: $('#cuJob').value.trim(),
+    hobby: $('#cuHobby').value.trim(),
+    note: $('#cuNote').value.trim()
+  };
+  return Object.keys(c).some(k => c[k]) ? c : null;
+}
+function partnerThumb(p) {
+  if (!p || !p.avatarFolderId || !S.avatarList) return '';
+  const a = S.avatarList.find(x => x.id === p.avatarFolderId);
+  return a && a.thumb ? a.thumb : '';
 }
 function renderPartnerCard() {
   const p = S.partner, card = $('#partnerCard');
@@ -769,7 +862,9 @@ function renderPartnerCard() {
     card.innerHTML = '<p class="muted">「お相手を決める」を押すと、ここにお相手の身上書が届きます。</p>';
     return;
   } else card.innerHTML = '';
+  const thumb = partnerThumb(p);
   card.innerHTML +=
+    (thumb ? '<img class="shinsho-photo" src="' + thumb + '" alt="' + esc(p.name) + 'さんの写真">' : '') +
     '<h3>' + esc(p.name) + '</h3>' +
     '<p class="kana">' + esc(p.kana) + '</p>' +
     (partnerMismatch() ? '<p class="warn">モードを切り替えたので、お相手を決め直してください。</p>' : '') +
@@ -910,14 +1005,20 @@ function bindOmiai() {
   $('#btnPartner').addEventListener('click', async () => {
     if (S.omiai && S.omiai.history && S.omiai.history.length > 1 && !confirm('今のお見合いの記録は消えます。別のお相手にしますか？')) return;
     const ok = await run('お相手を探しています', async () => {
-      const j = await api('createPartner', { mode: S.mode, difficulty: $('#optDifficulty').value });
+      const j = await api('createPartner', {
+        mode: S.mode, difficulty: $('#optDifficulty').value,
+        avatarChoice: S.photoChoice, custom: customSpec()
+      });
       S.partner = j.partner;
     });
     if (!ok) return;
     S.omiai = null;
     jset('ok_omiai', null);
+    S.avatarImages = null;
     renderPartnerCard();
+    $('#partnerCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+  $('#btnReloadPhotos').addEventListener('click', () => loadPhotoList(true));
   $('#btnStart').addEventListener('click', async () => {
     if (!S.partner) return;
     Voice.unlock();
