@@ -1,7 +1,7 @@
 /**
  * =========================================================
  * お見合い稽古（omiai-keiko）— 婚活シミュレーション＆トレーニング
- * Google Apps Script バックエンド  v1.1.0
+ * Google Apps Script バックエンド  v1.1.1
  * =========================================================
  * スクリプトプロパティ
  *   GEMINI_API_KEY   (必須) Gemini APIキー
@@ -27,7 +27,7 @@
  * =========================================================
  */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const APP_NAME = 'お見合い稽古';
 const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts';
@@ -794,10 +794,9 @@ function api_tts_(req) {
   if (!text) throw new Error('読み上げる文がありません');
   const all = VOICES_F.concat(VOICES_M);
   const voice = all.indexOf(req.voiceName) >= 0 ? req.voiceName : 'Kore';
-  const style = str_(req.style, 120);
-  const prompt = style ? style + '話してください：\n' + text : text;
+  // 話し方の指示を文に混ぜると、そのまま読み上げられてしまうため、セリフだけを送る
   const body = {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: text }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
