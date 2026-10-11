@@ -64,7 +64,40 @@ function setup() {
   });
   const p = PropertiesService.getScriptProperties();
   if (!p.getProperty('PEPPER')) p.setProperty('PEPPER', Utilities.getUuid() + Utilities.getUuid());
-  Logger.log('setup 完了。GEMINI_API_KEY をスクリプトプロパティに設定してください。');
+  Logger.log('setup 完了（シート作成済み）');
+  checkConfig();
+}
+
+/** 設定の確認（エディタから実行すると状態を表示） */
+function checkConfig() {
+  const props = PropertiesService.getScriptProperties().getProperties();
+  const keys = Object.keys(props);
+  const show = function (k, required) {
+    const v = props[k];
+    if (v) {
+      const masked = k === 'GEMINI_API_KEY' || k === 'PEPPER' ? v.slice(0, 4) + '…（' + v.length + '文字）' : v;
+      Logger.log('OK  ' + k + ' = ' + masked);
+    } else {
+      Logger.log((required ? 'NG  ' : '--  ') + k + (required ? ' が未設定です' : ' は未設定（既定値を使用）'));
+    }
+  };
+  show('GEMINI_API_KEY', true);
+  show('PEPPER', true);
+  show('AVATAR_FOLDER_ID', false);
+  show('GEMINI_MODEL', false);
+  show('GEMINI_TTS_MODEL', false);
+  show('APP_URL', false);
+  // 名前の打ち間違い（前後の空白・小文字など）を見つける
+  keys.forEach(function (k) {
+    const norm = k.trim().toUpperCase();
+    if (k !== norm && ['GEMINI_API_KEY', 'AVATAR_FOLDER_ID', 'GEMINI_MODEL', 'GEMINI_TTS_MODEL', 'APP_URL'].indexOf(norm) >= 0) {
+      Logger.log('注意  「' + k + '」は名前に空白や小文字が入っています。「' + norm + '」に直してください');
+    }
+  });
+  if (props.AVATAR_FOLDER_ID) {
+    const list = avatarFolders_();
+    Logger.log('写真フォルダ：' + list.length + '件 ' + list.map(function (f) { return f.name + '(' + (f.gender || '性別不明') + ')'; }).join(', '));
+  }
 }
 
 /** 権限の承認用（メール・Drive・外部通信） */
