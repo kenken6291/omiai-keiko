@@ -606,6 +606,9 @@ function avatarSvg(gender, seed, expr, frame) {
     mouth + blush + sweat + '</svg>';
 }
 
+function preloadImg(url) {
+  return new Promise(r => { const im = new Image(); im.onload = im.onerror = r; im.src = url; });
+}
 class Avatar {
   constructor(el) {
     this.el = el; this.expr = 'normal'; this.blink = false; this.mouth = false; this.talking = false;
@@ -623,19 +626,34 @@ class Avatar {
   }
   async useImages(images) {
     const names = Object.keys(images);
-    await Promise.all(names.map(n => new Promise(r => { const im = new Image(); im.onload = im.onerror = r; im.src = images[n]; })));
+    await Promise.all(names.map(n => preloadImg(images[n])));
     this.el.innerHTML = '';
-    const stack = document.createElement('div');
-    stack.className = 'av-stack photo';
+    this.stack = document.createElement('div');
+    this.stack.className = 'av-stack photo';
     this.layers = new Map();
-    names.forEach(n => {
-      const im = document.createElement('img');
-      im.src = images[n]; im.alt = ''; im.draggable = false;
-      stack.appendChild(im);
-      this.layers.set(n, im);
-    });
-    this.el.appendChild(stack);
-    this.images = images; this.mode = 'img';
+    this.images = {};
+    names.forEach(n => this._layer(n, images[n]));
+    this.el.appendChild(this.stack);
+    this.svgHost = null;
+    this.mode = 'img';
+    this.render(true);
+  }
+  _layer(key, url) {
+    let im = this.layers.get(key);
+    if (!im) {
+      im = document.createElement('img');
+      im.alt = ''; im.draggable = false;
+      this.stack.appendChild(im);
+      this.layers.set(key, im);
+    }
+    im.src = url;
+    this.images[key] = url;
+  }
+  // 写真を1枚ずつ追加（同じキーなら高画質版に差し替え）
+  async addImage(key, url) {
+    await preloadImg(url);
+    if (this.mode !== 'img' || !this.layers) { const o = {}; o[key] = url; return this.useImages(o); }
+    this._layer(key, url);
     this.render(true);
   }
   setExpr(e) { this.expr = EXPRS.includes(e) ? e : 'normal'; this.render(); }
@@ -656,7 +674,8 @@ class Avatar {
     if (!force && key === this._key) return;
     this._key = key;
     if (this.mode === 'img' && this.images) {
-      const k = this.images[key] ? key : (this.images[this.expr + '_base'] ? this.expr + '_base' : 'normal_base');
+      let k = this.images[key] ? key : (this.images[this.expr + '_base'] ? this.expr + '_base' : 'normal_base');
+      if (!this.images[k]) k = Object.keys(this.images)[0];
       this.layers.forEach((img, name) => img.classList.toggle('on', name === k));
     } else if (this.svgHost) {
       this.svgHost.innerHTML = avatarSvg(this.gender, this.seed, this.expr, this.frame());
@@ -944,20 +963,53 @@ function startTalkMic() {
     onEnd: f => { inp.value = f; if (f.trim()) sendTalk(f); }
   });
 }
+function setPhotoStatus(t) { const el = $('#photoStatus'); if (el) el.textContent = t || ''; }
 async function setupAvatar(p) {
-  if (p.avatarFolderId) {
-    try {
-      if (!S.avatarImages || S.avatarImages.id !== p.avatarFolderId) {
-        loading('お相手の写真を準備しています');
-        const j = await api('getAvatar', { folderId: p.avatarFolderId });
-        S.avatarImages = { id: p.avatarFolderId, images: j.images };
-      }
-      await avatar.useImages(S.avatarImages.images);
-      done();
-      return;
-    } catch (e) { done(); }
-  }
-  avatar.useSvg(p.gender, p.name || 'x');
+  S.avatarLoadToken = (S.avatarLoadToken || 0) + 1;
+  setPhotoStatus('');
+  if (!p.avatarFolderId) { avatar.useSvg(p.gender, p.name || 'x'); return; }
+  // まず身上書の写真をすぐ表示し、表情写真は裏で順に読み込む
+  const thumb = partnerThumb(p);
+  if (thumb) await avatar.useImages({ normal_base: thumb });
+  else avatar.useSvg(p.gender, p.name || 'x');
+  loadAvatarImages(p.avatarFolderId, S.avatarLoadToken).catch(e => {
+    setPhotoStatus('');
+    toast('写真を読み込めませんでした（' + e.message + '）', true);
+  });
+}
+async function loadAvatarImages(folderId, token) {
+  const j = await api('avatarManifest', { folderId: folderId });
+  const order = k => (k === 'normal_base' ? 0 : /_base$/.test(k) ? 1 : /_talk$/.test(k) ? 2 : 3);
+  const queue = (j.keys || []).slice().sort((a, b) => order(a.key) - order(b.key));
+  const total = queue.length;
+  let count = 0;
+  setPhotoStatus('写真を読み込み中 0 / ' + total);
+  const worker = async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      try {
+        const url = await getAvatarImage(folderId, item.key, item.rev);
+        if (token !== S.avatarLoadToken) return;
+        await avatar.addImage(item.key, url);
+      } catch (e) { console.warn('写真', item.key, e.message); }
+      count++;
+      if (token === S.avatarLoadToken) setPhotoStatus(count < total ? '写真を読み込み中 ' + count + ' / ' + total : '');
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+}
+// 端末に保存しておき、2回目からはすぐ表示
+async function getAvatarImage(folderId, key, rev) {
+  const ck = 'https://omiai-keiko.cache/avatar/' + folderId + '/' + key + '?v=' + encodeURIComponent(rev || '');
+  let cache = null;
+  try {
+    cache = await caches.open('omiai-avatars-v1');
+    const hit = await cache.match(ck);
+    if (hit) return await hit.text();
+  } catch (_) { cache = null; }
+  const j = await api('avatarImage', { folderId: folderId, key: key });
+  if (cache) { try { await cache.put(ck, new Response(j.url, { headers: { 'Content-Type': 'text/plain' } })); } catch (_) {} }
+  return j.url;
 }
 async function enterRoom() {
   const p = S.partner;
@@ -1035,7 +1087,6 @@ function bindOmiai() {
     if (!ok) return;
     S.omiai = null;
     jset('ok_omiai', null);
-    S.avatarImages = null;
     renderPartnerCard();
     $('#partnerCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -1064,6 +1115,8 @@ function bindOmiai() {
   });
   $('#btnLeave').addEventListener('click', () => {
     Mic.abort(); Voice.stop();
+    S.avatarLoadToken = (S.avatarLoadToken || 0) + 1;
+    setPhotoStatus('');
     if (S.omiai) { S.omiai.live = false; saveOmiai(); }
     $('#omiaiRoom').hidden = true;
     $('#omiaiSetup').hidden = false;

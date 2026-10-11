@@ -1,7 +1,7 @@
 /**
  * =========================================================
  * お見合い稽古（omiai-keiko）— 婚活シミュレーション＆トレーニング
- * Google Apps Script バックエンド  v1.0.2
+ * Google Apps Script バックエンド  v1.1.0
  * =========================================================
  * スクリプトプロパティ
  *   GEMINI_API_KEY   (必須) Gemini APIキー
@@ -27,7 +27,7 @@
  * =========================================================
  */
 
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.1.0';
 const APP_NAME = 'お見合い稽古';
 const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts';
@@ -135,7 +135,8 @@ function doPost(e) {
       structureProfile: api_structureProfile_,
       createPartner: api_createPartner_,
       listAvatars: api_listAvatars_,
-      getAvatar: api_getAvatar_,
+      avatarManifest: api_avatarManifest_,
+      avatarImage: api_avatarImage_,
       omiaiChat: api_omiaiChat_,
       tts: api_tts_,
       advice: api_advice_,
@@ -633,36 +634,99 @@ function api_listAvatars_() {
   try { cache.put('avatar_list_v2', JSON.stringify(out), 600); } catch (e) {}
   return { avatars: out };
 }
-function api_getAvatar_(req) {
-  const id = String(req.folderId || '');
-  if (!avatarFolders_().some(function (f) { return f.id === id; })) throw new Error('お相手の写真が見つかりません');
-  const files = avatarFiles_(id);
-  const keys = Object.keys(files);
-  if (!files.normal_base) throw new Error('「普通の顔」の写真がありません');
+function allowedFolder_(id) {
+  const c = CacheService.getScriptCache();
+  let ids = c.get('avatar_folder_ids');
+  if (!ids) {
+    ids = JSON.stringify(avatarFolders_().map(function (f) { return f.id; }));
+    try { c.put('avatar_folder_ids', ids, 600); } catch (e) {}
+  }
+  return JSON.parse(ids).indexOf(id) >= 0;
+}
 
-  // 表示用に縮小した画像を並列で取得（失敗したものは元画像）
-  const token = ScriptApp.getOAuthToken();
-  const reqs = keys.map(function (k) {
-    return { url: 'https://drive.google.com/thumbnail?sz=w720&id=' + files[k].getId(), headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: true };
+/** その人の表情写真の一覧（キーと更新印） */
+function api_avatarManifest_(req) {
+  const id = String(req.folderId || '');
+  if (!allowedFolder_(id)) throw new Error('お相手の写真フォルダが見つかりません');
+  const files = avatarFiles_(id);
+  if (!files.normal_base) throw new Error('「普通の顔」の写真がありません');
+  const keys = Object.keys(files).map(function (k) {
+    const f = files[k];
+    return { key: k, rev: f.getId().slice(-8) + '_' + f.getLastUpdated().getTime() };
   });
-  let res = [];
-  try { res = UrlFetchApp.fetchAll(reqs); } catch (e) { res = []; }
-  const images = {};
-  keys.forEach(function (k, i) {
-    const r = res[i];
-    if (r && r.getResponseCode() === 200) {
-      const b = r.getBlob();
-      const ct = b.getContentType() || '';
-      const bytes = b.getBytes();
-      if (/^image\//.test(ct) && bytes.length > 3000) {
-        images[k] = 'data:' + ct + ';base64,' + Utilities.base64Encode(bytes);
-        return;
+  return { keys: keys };
+}
+
+/** 表情写真を1枚、表示用に縮小して返す（6時間キャッシュ） */
+function api_avatarImage_(req) {
+  const id = String(req.folderId || '');
+  const key = String(req.key || '');
+  if (!allowedFolder_(id)) throw new Error('お相手の写真フォルダが見つかりません');
+  const file = avatarFiles_(id)[key];
+  if (!file) throw new Error('写真がありません: ' + key);
+  const ck = 'img_' + file.getId() + '_' + file.getLastUpdated().getTime();
+  const hit = cacheGetBig_(ck);
+  if (hit) return { key: key, url: hit };
+  const url = resizedDataUrl_(file, 800);
+  cachePutBig_(ck, url, 21600);
+  return { key: key, url: url };
+}
+
+function resizedDataUrl_(file, size) {
+  const token = ScriptApp.getOAuthToken();
+  const auth = { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: true };
+  const ok = function (r) {
+    if (!r || r.getResponseCode() !== 200) return '';
+    const b = r.getBlob();
+    const ct = b.getContentType() || '';
+    const bytes = b.getBytes();
+    if (!/^image\//.test(ct) || bytes.length < 3000) return '';
+    return 'data:' + ct + ';base64,' + Utilities.base64Encode(bytes);
+  };
+  // 1) Drive API のサムネイルリンクを大きめサイズで
+  try {
+    const meta = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + file.getId() + '?fields=thumbnailLink', auth);
+    if (meta.getResponseCode() === 200) {
+      const link = JSON.parse(meta.getContentText()).thumbnailLink;
+      if (link) {
+        const u = link.replace(/=s\d+(-[a-z0-9-]+)?$/i, '') + '=s' + size;
+        const got = ok(UrlFetchApp.fetch(u, auth));
+        if (got) return got;
       }
     }
-    const blob = files[k].getBlob();
-    images[k] = 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
-  });
-  return { images: images };
+  } catch (e) {}
+  // 2) Drive のサムネイルURL
+  try {
+    const got = ok(UrlFetchApp.fetch('https://drive.google.com/thumbnail?sz=w' + size + '&id=' + file.getId(), auth));
+    if (got) return got;
+  } catch (e) {}
+  // 3) 元の画像
+  const blob = file.getBlob();
+  return 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
+}
+
+/* ---------- 大きい値のキャッシュ（分割保存） ---------- */
+function cacheGetBig_(key) {
+  try {
+    const c = CacheService.getScriptCache();
+    const n = Number(c.get(key + '_n') || 0);
+    if (!n) return null;
+    const keys = [];
+    for (let i = 0; i < n; i++) keys.push(key + '_' + i);
+    const m = c.getAll(keys);
+    let s = '';
+    for (let i = 0; i < keys.length; i++) { if (m[keys[i]] == null) return null; s += m[keys[i]]; }
+    return s;
+  } catch (e) { return null; }
+}
+function cachePutBig_(key, str, ttl) {
+  const size = 90000;
+  const obj = {};
+  let n = 0;
+  for (let i = 0; i < str.length; i += size) { obj[key + '_' + n] = str.slice(i, i + size); n++; }
+  if (n > 30) return;
+  obj[key + '_n'] = String(n);
+  try { CacheService.getScriptCache().putAll(obj, ttl); } catch (e) {}
 }
 
 /* =========================================================
