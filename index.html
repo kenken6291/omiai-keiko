@@ -254,6 +254,15 @@
             <input type="text" id="optArea" placeholder="例：横浜・みなとみらい">
           </label>
         </div>
+        <label>話し終わりの待ち時間
+          <select id="optWait">
+            <option value="2500">短め（2.5秒）</option>
+            <option value="4000" selected>ふつう（4秒）</option>
+            <option value="6000">長め（6秒）</option>
+            <option value="9000">かなり長め（9秒）</option>
+          </select>
+        </label>
+        <p class="note">話の途中で間があっても、この時間だまるまで聞き取りを続けます。話し終えたら、マイクボタンを押すとすぐ送れます。</p>
         <label class="check"><input type="checkbox" id="optHandsFree" checked>ハンズフリー（お相手が話し終えたら自動で聞き取る）</label>
         <label class="check"><input type="checkbox" id="optInner">お相手の心の声を表示する（練習用）</label>
       </div>

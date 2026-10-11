@@ -84,7 +84,8 @@ function setServerVersion(v) {
 }
 function renderVersion() {
   const sv = S.serverVersion;
-  const mismatch = !!sv && sv !== APP_VERSION;
+  const minor = v => String(v).split('.').slice(0, 2).join('.');
+  const mismatch = !!sv && minor(sv) !== minor(APP_VERSION);
   const badge = $('#verBadge');
   badge.textContent = 'v' + APP_VERSION;
   badge.classList.toggle('mismatch', mismatch);
@@ -917,7 +918,7 @@ function startTalkMic() {
   if (Mic.active() || S.chatBusy) return;
   const inp = $('#talkInput');
   Mic.start({
-    silenceMs: 1800,
+    silenceMs: Number($('#optWait').value) || 4000,
     onText: (f, i) => { inp.value = f + i; },
     onState: on => setMicUI($('#talkMic'), on),
     onEnd: f => { inp.value = f; if (f.trim()) sendTalk(f); }
@@ -1130,6 +1131,22 @@ function renderLogs() {
   }));
 }
 
+/* ---------- 設定の保存 ---------- */
+function restoreOptions() {
+  const o = jget('ok_opts', {});
+  ['optWait', 'optVoice', 'optDifficulty'].forEach(id => { if (o[id] != null && $('#' + id)) $('#' + id).value = o[id]; });
+  ['optHandsFree', 'optInner', 'hearSpeak'].forEach(id => { if (o[id] != null && $('#' + id)) $('#' + id).checked = !!o[id]; });
+  ['optWait', 'optVoice', 'optDifficulty', 'optHandsFree', 'optInner', 'hearSpeak'].forEach(id => {
+    const el = $('#' + id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      const cur = jget('ok_opts', {});
+      cur[id] = el.type === 'checkbox' ? el.checked : el.value;
+      jset('ok_opts', cur);
+    });
+  });
+}
+
 /* ---------- 起動 ---------- */
 function init() {
   renderVersion();
@@ -1147,6 +1164,7 @@ function init() {
   bindHearing();
   bindStyling();
   bindOmiai();
+  restoreOptions();
   setMode(S.mode, true);
   $$('input[name=rgGender]').forEach(r => { r.checked = r.value === S.mode; });
   if (!Mic.supported()) $('#hearMic').title = 'このブラウザは音声入力に対応していません';
