@@ -7,11 +7,12 @@ window.APP_CONFIG = {
   GAS_URL: 'https://script.google.com/macros/s/AKfycbwomPEDEZONIYfzld5GqEYBL0O3-37txQSTf9spMe810yBzTpTddiV030yEYRzRnZLr/exec',
 
   // バージョン情報
-  APP_VERSION: '1.0.3',
+  APP_VERSION: '1.0.4',
   BUILD_DATE: '2026-10-11',
 
   // 更新履歴（新しい順）
   CHANGELOG: [
+    { version: '1.0.4', date: '2026-10-11', notes: ['サーバーの一時的なエラーで会話が止まらないよう、自動で再送（最大3回）', 'エラー時にサーバー側の原因を表示'] },
     { version: '1.0.3', date: '2026-10-11', notes: ['話の途中の間で送信されないよう、聞き取りの待ち時間を長く（既定4秒）', '待ち時間を「短め〜かなり長め」から選べるように', '声・ハンズフリーなどの設定を次回も覚えるように'] },
     { version: '1.0.2', date: '2026-10-11', notes: ['音声入力で同じ言葉がくり返される不具合を修正（Android対策）', 'お相手の写真（Driveに登録した人）を選べるように変更', 'お相手の名前・年齢・職業・趣味・人柄を指定できるように変更', '写真の日本語ファイル名（普通の顔・笑顔・驚き顔・困り顔／瞬き・しゃべり）に対応'] },
     { version: '1.0.1', date: '2026-10-11', notes: ['GAS URLを config.js に分離', 'バージョン情報の表示を追加（ヘッダー・フッター・詳細画面）'] },

@@ -124,27 +124,47 @@ async function checkServer() {
 }
 
 /* ---------- API ---------- */
+// 一時的なエラー時に自動で再送しない操作（メール送信や記録の重複を防ぐ）
+const NO_RETRY = ['register', 'resetPassword', 'login', 'finishOmiai', 'createPartner'];
+function gasErrorDetail(text, status) {
+  const plain = String(text || '')
+    .replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+  const m = /(Exception:[^。]{0,80}|エラー[^。]{0,60}|Error[^.]{0,80})/i.exec(plain);
+  return m ? '（' + m[1].trim() + '）' : (status ? '（コード ' + status + '）' : '');
+}
 async function api(action, data) {
   if (!GAS_URL) throw new Error('接続先が設定されていません。config.js の GAS_URL を確認してください');
   const body = JSON.stringify(Object.assign({ action: action, token: S.token }, data || {}));
-  let res, j;
-  try {
-    res = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body });
-  } catch (e) {
-    throw new Error('サーバーにつながりません。通信状況を確認してください');
-  }
-  try { j = await res.json(); } catch (e) {
-    throw new Error('サーバーの応答を読み取れませんでした。GASのURLとデプロイ設定を確認してください');
-  }
-  if (j.version) setServerVersion(j.version);
-  if (!j.ok) {
-    if (j.error === 'SESSION_EXPIRED') {
-      logoutLocal();
-      throw new Error('ログインの有効期限が切れました。もう一度ログインしてください');
+  const tries = NO_RETRY.includes(action) ? 1 : 3;
+  let lastErr = null;
+  for (let t = 0; t < tries; t++) {
+    if (t) await new Promise(r => setTimeout(r, 1200 * t));
+    let res, text;
+    try {
+      res = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body, cache: 'no-store' });
+      text = await res.text();
+    } catch (e) {
+      lastErr = new Error('サーバーにつながりません。通信状況を確認してください');
+      continue;
     }
-    throw new Error(j.error || 'エラーが発生しました');
+    let j;
+    try { j = JSON.parse(text); } catch (e) {
+      console.warn('[GAS応答]', action, res.status, String(text).slice(0, 800));
+      lastErr = new Error('サーバーで一時的なエラーが起きました' + gasErrorDetail(text, res.status) + '。もう一度試してください');
+      continue;
+    }
+    if (j.version) setServerVersion(j.version);
+    if (!j.ok) {
+      if (j.error === 'SESSION_EXPIRED') {
+        logoutLocal();
+        throw new Error('ログインの有効期限が切れました。もう一度ログインしてください');
+      }
+      throw new Error(j.error || 'エラーが発生しました');
+    }
+    return j;
   }
-  return j;
+  throw lastErr || new Error('エラーが発生しました');
 }
 async function run(msg, fn) {
   if (S.busy) return false;
