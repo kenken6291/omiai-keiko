@@ -7,11 +7,25 @@ window.APP_CONFIG = {
   GAS_URL: 'https://script.google.com/macros/s/AKfycbwomPEDEZONIYfzld5GqEYBL0O3-37txQSTf9spMe810yBzTpTddiV030yEYRzRnZLr/exec',
 
   // バージョン情報
-  APP_VERSION: '1.1.0',
-  BUILD_DATE: '2026-10-11',
+  APP_VERSION: '1.2.0',
+  BUILD_DATE: '2026-11-19',
+
+  // 画面の「AIモデル」選択肢（value がAPIのモデルID、'' = 自動）
+  // 選んだモデルが使えない（廃止・未公開・名前違い）時は、
+  // GAS側で汎用の最新モデルへ自動で切り替わる
+  GEMINI_MODEL_OPTIONS: [
+    { value: '',                  label: '自動モード（汎用の最新）' },
+    { value: 'gemini-4-hydrogen', label: '4 Hydrogen（日々の暮らしをサポート）' },
+    { value: 'gemini-4-neon',     label: '4 Neon（Deeper analysis）' },
+    { value: 'gemini-4-carbon',   label: '4 Carbon（Code & complex work）' },
+    { value: 'gemini-4-argon',    label: '4 Argon' },
+    { value: 'gemini-3.8-flash',  label: '3.8 Flash' },
+    { value: 'gemini-3.5-flash',  label: '3.5 Flash' }
+  ],
 
   // 更新履歴（新しい順）
   CHANGELOG: [
+    { version: '1.2.0', date: '2026-11-19', notes: ['Geminiの新しいモデル（4 Hydrogen／Neon／Carbon／Argon、3.8／3.5 Flash）に対応', '使うAIモデルを画面で選べるように（既定は自動モード＝汎用の最新）', '選んだモデルが使えない時は、汎用の最新モデルに自動で切り替え', 'バージョン情報に、実際に使ったAIモデルを表示'] },
     { version: '1.1.0', date: '2026-10-11', notes: ['お見合い画面で選んだ写真の人がすぐ表示されるように修正', '表情写真を縮小して1枚ずつ読み込み、端末に保存（2回目から高速）', '前のお相手のイラストが残る不具合を修正'] },
     { version: '1.0.4', date: '2026-10-11', notes: ['サーバーの一時的なエラーで会話が止まらないよう、自動で再送（最大3回）', 'エラー時にサーバー側の原因を表示'] },
     { version: '1.0.3', date: '2026-10-11', notes: ['話の途中の間で送信されないよう、聞き取りの待ち時間を長く（既定4秒）', '待ち時間を「短め〜かなり長め」から選べるように', '声・ハンズフリーなどの設定を次回も覚えるように'] },

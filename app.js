@@ -8,6 +8,9 @@ const CFG = window.APP_CONFIG || {};
 const APP_VERSION = CFG.APP_VERSION || '0.0.0';
 const BUILD_DATE = CFG.BUILD_DATE || '';
 const GAS_URL = CFG.GAS_URL || '';
+const MODEL_OPTIONS = (CFG.GEMINI_MODEL_OPTIONS && CFG.GEMINI_MODEL_OPTIONS.length)
+  ? CFG.GEMINI_MODEL_OPTIONS
+  : [{ value: '', label: '自動モード（汎用の最新）' }];
 
 const QUESTIONS = [
   { cat: '自分のこと', q: 'まずはあなたのことを教えてください。周りの人からは、どんな性格だと言われますか？' },
@@ -57,8 +60,12 @@ const S = {
   view: 'auth',
   serverVersion: '',
   avatarList: null,
-  photoChoice: localStorage.getItem('ok_photo') || 'auto'
+  photoChoice: localStorage.getItem('ok_photo') || 'auto',
+  model: localStorage.getItem('ok_model') || '',
+  usedModel: '',
+  modelWarned: false
 };
+if (!MODEL_OPTIONS.some(o => o.value === S.model)) S.model = '';
 
 /* ---------- 表示まわり ---------- */
 function loading(msg) { $('#loadingMsg').textContent = msg || '少しお待ちください'; $('#loading').hidden = false; }
@@ -94,6 +101,7 @@ function renderVersion() {
   $('#vDate').textContent = BUILD_DATE || '—';
   $('#vServer').textContent = sv ? 'v' + sv : (GAS_URL ? '確認中…' : '未接続');
   $('#vUrl').textContent = maskUrl(GAS_URL);
+  $('#vModel').textContent = modelLabel(S.model) + (S.usedModel ? '（直近の返事：' + S.usedModel + '）' : '');
   const warn = $('#vWarn');
   if (!GAS_URL) { warn.hidden = false; warn.textContent = 'config.js に GAS_URL が設定されていません。'; }
   else if (mismatch) { warn.hidden = false; warn.textContent = 'アプリとサーバーのバージョンが違います。Code.gs の更新と再デプロイが済んでいるか確認してください。'; }
@@ -123,6 +131,34 @@ async function checkServer() {
   }
 }
 
+/* ---------- AIモデル ---------- */
+function modelLabel(v) {
+  const o = MODEL_OPTIONS.find(x => x.value === v);
+  return o ? o.label : (v || '自動モード（汎用の最新）');
+}
+function initModelSelect() {
+  const sel = $('#optModel');
+  if (!sel) return;
+  sel.innerHTML = MODEL_OPTIONS.map(o => '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>').join('');
+  sel.value = S.model;
+  sel.addEventListener('change', () => {
+    S.model = sel.value;
+    S.modelWarned = false;
+    try { S.model ? localStorage.setItem('ok_model', S.model) : localStorage.removeItem('ok_model'); } catch (_) {}
+    renderVersion();
+    toast('AIモデル：' + modelLabel(S.model));
+  });
+}
+function noteModel(j) {
+  if (!j || !j.model) return;
+  S.usedModel = j.model;
+  if (j.requestedModel && j.model !== j.requestedModel && !S.modelWarned) {
+    S.modelWarned = true;
+    toast(modelLabel(j.requestedModel) + ' が使えなかったため、' + j.model + ' に自動で切り替えました', true);
+  }
+  renderVersion();
+}
+
 /* ---------- API ---------- */
 // 一時的なエラー時に自動で再送しない操作（メール送信や記録の重複を防ぐ）
 const NO_RETRY = ['register', 'resetPassword', 'login', 'finishOmiai', 'createPartner'];
@@ -135,7 +171,7 @@ function gasErrorDetail(text, status) {
 }
 async function api(action, data) {
   if (!GAS_URL) throw new Error('接続先が設定されていません。config.js の GAS_URL を確認してください');
-  const body = JSON.stringify(Object.assign({ action: action, token: S.token }, data || {}));
+  const body = JSON.stringify(Object.assign({ action: action, token: S.token, model: S.model }, data || {}));
   const tries = NO_RETRY.includes(action) ? 1 : 3;
   let lastErr = null;
   for (let t = 0; t < tries; t++) {
@@ -155,6 +191,7 @@ async function api(action, data) {
       continue;
     }
     if (j.version) setServerVersion(j.version);
+    noteModel(j);
     if (!j.ok) {
       if (j.error === 'SESSION_EXPIRED') {
         logoutLocal();
@@ -1222,6 +1259,7 @@ function restoreOptions() {
 
 /* ---------- 起動 ---------- */
 function init() {
+  initModelSelect();
   renderVersion();
   renderChangelog();
   $('#verBadge').addEventListener('click', openVersion);

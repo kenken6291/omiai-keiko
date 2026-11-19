@@ -1,11 +1,12 @@
 /**
  * =========================================================
  * お見合い稽古（omiai-keiko）— 婚活シミュレーション＆トレーニング
- * Google Apps Script バックエンド  v1.1.1
+ * Google Apps Script バックエンド  v1.2.0
  * =========================================================
  * スクリプトプロパティ
  *   GEMINI_API_KEY   (必須) Gemini APIキー
- *   GEMINI_MODEL     (任意) 会話・分析用モデル   既定: gemini-2.5-flash
+ *   （会話・分析用モデルは画面で選択。「自動モード」は FALLBACK_TEXT_MODELS を順に使用。
+ *     旧プロパティ GEMINI_MODEL は使わなくなったので削除してOK）
  *   GEMINI_TTS_MODEL (任意) 音声合成モデル       既定: gemini-3.8-flash-tts
  *   APP_URL          (任意) メールに載せる公開URL 既定: https://kenken6291.github.io/omiai-keiko/
  *   AVATAR_FOLDER_ID (任意) お相手画像の親フォルダID（Drive）
@@ -27,9 +28,14 @@
  * =========================================================
  */
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 const APP_NAME = 'お見合い稽古';
-const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
+// 自動モード・指定モデルが使えない時に使う汎用の最新モデル（先頭から順に試す）
+//   gemini-flash-latest : Googleが常に最新の汎用モデルへ差し替えるエイリアス
+//   gemini-4-hydrogen   : 2026年11月時点の汎用最新モデル（日々の暮らしをサポート）
+//   gemini-3.8-flash    : 最終的な保険
+const FALLBACK_TEXT_MODELS = ['gemini-flash-latest', 'gemini-4-hydrogen', 'gemini-3.8-flash'];
+const MODEL_PATTERN = /^gemini-[a-z0-9][a-z0-9.\-]{0,60}$/;
 const DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts';
 const DEFAULT_APP_URL = 'https://kenken6291.github.io/omiai-keiko/';
 const SESSION_TTL = 21600; // 6時間
@@ -46,6 +52,10 @@ const VOICES_F = ['Kore', 'Aoede', 'Leda', 'Zephyr', 'Autonoe', 'Callirrhoe', 'D
 const VOICES_M = ['Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba',
   'Algenib', 'Rasalgethi', 'Alnilam', 'Schedar', 'Achird', 'Zubenelgenubi', 'Sadachbia', 'Sadaltager'];
 const EXPRS = ['normal', 'smile', 'surprise', 'trouble'];
+
+// 1回のリクエスト内で使うモデル情報（doPostで設定）
+let REQ_MODEL_ = '';   // 画面で選ばれたモデル（'' = 自動）
+let USED_MODEL_ = '';  // 実際に返事をしたモデル
 
 /* =========================================================
  * 初期設定（エディタから1回実行）
@@ -84,7 +94,6 @@ function checkConfig() {
   show('GEMINI_API_KEY', true);
   show('PEPPER', true);
   show('AVATAR_FOLDER_ID', false);
-  show('GEMINI_MODEL', false);
   show('GEMINI_TTS_MODEL', false);
   show('APP_URL', false);
   // 名前の打ち間違い（前後の空白・小文字など）を見つける
@@ -112,7 +121,7 @@ function authorize() {
  * ルーティング
  * ========================================================= */
 function doGet() {
-  return json_({ ok: true, app: APP_NAME, version: APP_VERSION });
+  return json_({ ok: true, app: APP_NAME, version: APP_VERSION, fallbackModels: FALLBACK_TEXT_MODELS });
 }
 
 function doPost(e) {
@@ -120,6 +129,9 @@ function doPost(e) {
   try {
     const req = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     const a = String(req.action || '');
+    const m = String(req.model || '').trim().toLowerCase();
+    REQ_MODEL_ = MODEL_PATTERN.test(m) ? m : '';
+    USED_MODEL_ = '';
     const PUBLIC = {
       ping: function () { return {}; },
       register: api_register_,
@@ -158,6 +170,7 @@ function doPost(e) {
   } catch (err) {
     res = { ok: false, error: String((err && err.message) || err), version: APP_VERSION };
   }
+  if (USED_MODEL_) { res.model = USED_MODEL_; res.requestedModel = REQ_MODEL_; }
   return json_(res);
 }
 
@@ -382,23 +395,55 @@ function api_updateAccount_(req, u) {
 /* =========================================================
  * Gemini
  * ========================================================= */
-function callGemini_(model, body) {
+// 1モデルを呼ぶ。混雑(429/5xx)時は待ち時間を伸ばして最大3回。結果は {code, text}
+function callGeminiRaw_(model, body) {
   const key = prop_('GEMINI_API_KEY', '');
   if (!key) throw new Error('GEMINI_API_KEY が設定されていません');
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key;
-  let last = '';
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent';
+  let code = 0, text = '';
   for (let i = 0; i < 3; i++) {
     const r = UrlFetchApp.fetch(url, {
       method: 'post', contentType: 'application/json',
+      headers: { 'x-goog-api-key': key },
       payload: JSON.stringify(body), muteHttpExceptions: true
     });
-    const code = r.getResponseCode();
-    if (code === 200) return JSON.parse(r.getContentText());
-    last = code + ' ' + r.getContentText().slice(0, 300);
-    if (code === 429 || code >= 500) { Utilities.sleep(1200 * (i + 1)); continue; }
+    code = r.getResponseCode();
+    text = r.getContentText();
+    if (code === 200) break;
+    if (code === 429 || code >= 500) { if (i < 2) Utilities.sleep(1200 * (i + 1)); continue; }
     break;
   }
-  throw new Error('AIの呼び出しに失敗しました（' + last + '）');
+  return { code: code, text: text };
+}
+
+// モデルが存在しない（廃止・未公開・名前違い）ことを示す応答か
+function isModelNotFound_(code, text) {
+  if (code === 404) return true;
+  if (code === 400) return /not found|is not supported|NOT_FOUND|unknown model|invalid model/i.test(text);
+  return false;
+}
+
+// 指定モデル1つだけで呼ぶ（音声合成用）
+function callGemini_(model, body) {
+  const r = callGeminiRaw_(model, body);
+  if (r.code === 200) return JSON.parse(r.text);
+  throw new Error('AIの呼び出しに失敗しました（' + r.code + ' ' + String(r.text).slice(0, 300) + '）');
+}
+
+// 会話・分析用：選ばれたモデル → 汎用の最新モデル の順に、使えるものが見つかるまで試す
+function callTextGemini_(body) {
+  const list = (REQ_MODEL_ ? [REQ_MODEL_] : []).concat(FALLBACK_TEXT_MODELS);
+  const candidates = list.filter(function (m, i) { return list.indexOf(m) === i; });
+  let last = null;
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i];
+    const r = callGeminiRaw_(model, body);
+    if (r.code === 200) { USED_MODEL_ = model; return JSON.parse(r.text); }
+    last = { model: model, code: r.code, text: r.text };
+    if (!isModelNotFound_(r.code, r.text)) break;
+    console.warn('Geminiモデル「' + model + '」が使えないため次の候補へ切り替えます');
+  }
+  throw new Error('AIの呼び出しに失敗しました（' + last.model + '：' + last.code + ' ' + String(last.text).slice(0, 300) + '）');
 }
 
 function gemini_(prompt, opt) {
@@ -409,7 +454,7 @@ function gemini_(prompt, opt) {
   };
   if (opt.system) body.systemInstruction = { parts: [{ text: opt.system }] };
   if (opt.json) body.generationConfig.responseMimeType = 'application/json';
-  const j = callGemini_(prop_('GEMINI_MODEL', DEFAULT_TEXT_MODEL), body);
+  const j = callTextGemini_(body);
   const parts = (((j.candidates || [])[0] || {}).content || {}).parts || [];
   const text = parts.map(function (p) { return p.text || ''; }).join('');
   if (!text) throw new Error('AIから返事がありませんでした。もう一度試してください');
